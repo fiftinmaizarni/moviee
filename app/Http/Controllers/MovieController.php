@@ -2,61 +2,75 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\Models\Movie;
 use App\Models\Category;
-use Illuminate\Support\Str;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use App\Http\Requests\StoreMovieRequest;
 
 class MovieController extends Controller
 {
+    /**
+     * Tampilkan halaman homepage dengan daftar movie dan pencarian.
+     */
     public function index()
     {
-        $query = Movie::latest();
-        if (request('search')) {
-            $query->where('judul', 'like', '%' . request('search') . '%')
-                ->orWhere('sinopsis', 'like', '%' . request('search') . '%');
-        }
-        $movies = $query->paginate(6)->withQueryString();
+        $movies = Movie::latest()
+            ->when(request('search'), function ($query) {
+                $search = request('search');
+                $query->where('judul', 'like', "%$search%")
+                      ->orWhere('sinopsis', 'like', "%$search%");
+            })
+            ->paginate(6)
+            ->withQueryString();
+
         return view('homepage', compact('movies'));
     }
 
+    /**
+     * Tampilkan detail film.
+     */
     public function detail($id)
     {
         $movie = Movie::findOrFail($id);
         return view('detail', compact('movie'));
     }
 
+    /**
+     * Tampilkan form tambah data film.
+     */
     public function create()
     {
         $categories = Category::all();
         return view('input', compact('categories'));
     }
 
+    /**
+     * Simpan data film baru.
+     */
     public function store(StoreMovieRequest $request)
     {
-        $validated = $request->validated();
+        $data = $request->validated();
+        $data['foto_sampul'] = $this->handleCoverUpload($request);
 
-        if ($request->hasFile('foto_sampul')) {
-            $path = $request->file('foto_sampul')->store('movie_covers', 'public');
-            $validated['foto_sampul'] = Storage::url($path);
-        }
-
-        Movie::create($validated);
+        Movie::create($data);
 
         return redirect()->route('movies.data')->with('success', 'Film berhasil ditambahkan.');
     }
 
+    /**
+     * Tampilkan data semua film.
+     */
     public function data()
     {
         $movies = Movie::latest()->paginate(10);
         return view('data-movies', compact('movies'));
     }
 
+    /**
+     * Tampilkan form edit.
+     */
     public function form_edit($id)
     {
         $movie = Movie::findOrFail($id);
@@ -64,6 +78,9 @@ class MovieController extends Controller
         return view('form-edit', compact('movie', 'categories'));
     }
 
+    /**
+     * Update data film.
+     */
     public function update(Request $request, $id)
     {
         $validator = Validator::make($request->all(), [
@@ -85,11 +102,8 @@ class MovieController extends Controller
         $data = $request->only(['judul', 'category_id', 'sinopsis', 'tahun', 'pemain']);
 
         if ($request->hasFile('foto_sampul')) {
-            if ($movie->foto_sampul) {
-                Storage::disk('public')->delete(str_replace('/storage/', '', $movie->foto_sampul));
-            }
-            $path = $request->file('foto_sampul')->store('movie_covers', 'public');
-            $data['foto_sampul'] = Storage::url($path);
+            $this->deleteCoverIfExists($movie->foto_sampul);
+            $data['foto_sampul'] = $this->handleCoverUpload($request);
         }
 
         $movie->update($data);
@@ -97,16 +111,37 @@ class MovieController extends Controller
         return redirect()->route('movies.data')->with('success', 'Data berhasil diperbarui');
     }
 
+    /**
+     * Hapus data film.
+     */
     public function delete($id)
     {
         $movie = Movie::findOrFail($id);
-
-        if ($movie->foto_sampul) {
-            Storage::disk('public')->delete(str_replace('/storage/', '', $movie->foto_sampul));
-        }
-
+        $this->deleteCoverIfExists($movie->foto_sampul);
         $movie->delete();
 
         return redirect()->route('movies.data')->with('success', 'Data berhasil dihapus');
+    }
+
+    /**
+     * Upload dan simpan foto sampul film.
+     */
+    private function handleCoverUpload(Request $request): ?string
+    {
+        if ($request->hasFile('foto_sampul')) {
+            $path = $request->file('foto_sampul')->store('movie_covers', 'public');
+            return Storage::url($path);
+        }
+        return null;
+    }
+
+    /**
+     * Hapus file sampul lama dari storage.
+     */
+    private function deleteCoverIfExists(?string $path)
+    {
+        if ($path) {
+            Storage::disk('public')->delete(str_replace('/storage/', '', $path));
+        }
     }
 }
